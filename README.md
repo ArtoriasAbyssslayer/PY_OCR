@@ -20,11 +20,11 @@ A sleek, modern desktop application for extracting text from images using **AI-p
 
 ## Screenshots 📸
 
-![App Screenshot](screenshot.png)  <!-- replace with your actual screenshot file -->
+![App Screenshot](https://github.com/ArtoriasAbyssslayer/PY_OCR/screenshot.png)  <!-- replace with your actual screenshot file -->
 
 ## Installation 💻
 
-Download the latest **setup.exe** from the [Releases](https://github.com/yourusername/your-repo/releases) page and run the installer.  
+Download the latest **setup.exe** from the [Releases](https://github.com/ArtoriasAbyssslayer/PY_OCR/releases) page and run the installer.  
 
 No Python setup required—everything is bundled.  
 
