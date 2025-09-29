@@ -20,7 +20,7 @@ A sleek, modern desktop application for extracting text from images using **AI-p
 
 ## Screenshots 📸
 
-![App Screenshot](https://github.com/ArtoriasAbyssslayer/PY_OCR/screenshot.png)  <!-- replace with your actual screenshot file -->
+![App Screenshot](https://github.com/ArtoriasAbyssslayer/PY_OCR/blob/master/screenshot.png)  <!-- replace with your actual screenshot file -->
 
 ## Installation 💻
 
