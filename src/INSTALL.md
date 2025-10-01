@@ -9,6 +9,11 @@
 ### Installing Tesseract OCR
 
 #### Windows
+A. Use winget 
+```bash
+   winget install --id=UB-Mannheim.TesseractOCR  -e
+```
+B. Manual download (Recommended)
 1. Download installer from [GitHub releases](https://github.com/UB-Mannheim/tesseract/wiki)
 2. Run the installer and note the installation path (e.g., `C:\Program Files\Tesseract-OCR`)
 3. Add Tesseract to your system PATH or set it in the code:
