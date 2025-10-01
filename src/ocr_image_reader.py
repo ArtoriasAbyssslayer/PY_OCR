@@ -9,12 +9,22 @@ import os
 import cv2
 import numpy as np
 
+# Add after existing imports
+try:
+    from dl_ocr import DLOCRModel
+    DL_OCR_AVAILABLE = True
+except ImportError:
+    DL_OCR_AVAILABLE = False
+    print("Deep Learning OCR not available. Install: pip install torch transformers easyocr")
+    
+
 class OCRImageReader:
     def __init__(self, root):
         self.root = root
         self.root.title("OCR Image Reader")
         self.root.geometry("1200x800")
         self.root.minsize(1000, 700)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # Variables
         self.current_image_path = None
@@ -22,7 +32,6 @@ class OCRImageReader:
         self.photo_image = None
         self.selected_language = StringVar(value='eng')
         self.auto_detect_lang = BooleanVar(value=False)
-        # Preserve formatting (useful for code / tables)
         self.preserve_format_var = BooleanVar(value=False)
         
         # Available languages (common ones)
@@ -42,6 +51,12 @@ class OCRImageReader:
             'Arabic': 'ara',
             'Hindi': 'hin'
         }
+        
+        # DL OCR variables
+        self.dl_model = None 
+        self.use_dl_ocr = BooleanVar(value=False)
+        self.dl_model_type = StringVar(value='printed')
+        self.dl_model_name = StringVar(value='easyocr')
         
         # Configure style
         self.setup_styles()
@@ -99,7 +114,7 @@ class OCRImageReader:
                        font=('Segoe UI', 11, 'bold'),
                        padding=(5, 5))
         
-        # Button styles - Modern flat design
+        # Button styles
         style.configure('TButton', 
                        background=bg_light,
                        foreground=fg_color,
@@ -132,15 +147,6 @@ class OCRImageReader:
         style.map('Secondary.TButton',
                  background=[('active', bg_hover)])
         
-        # Entry style
-        style.configure('TEntry',
-                       fieldbackground=bg_light,
-                       foreground=fg_color,
-                       borderwidth=1,
-                       bordercolor=border_color,
-                       insertcolor=fg_bright,
-                       relief=FLAT)
-        
         # Combobox style
         style.configure('TCombobox',
                        fieldbackground=bg_light,
@@ -162,7 +168,15 @@ class OCRImageReader:
         style.map('TCheckbutton',
                  background=[('active', bg_medium)])
         
-        # Scrollbar style - minimal modern design
+        # Radiobutton style
+        style.configure('TRadiobutton',
+                       background=bg_medium,
+                       foreground=fg_color,
+                       font=('Segoe UI', 9))
+        style.map('TRadiobutton',
+                 background=[('active', bg_medium)])
+        
+        # Scrollbar style
         style.configure('Vertical.TScrollbar',
                        background=bg_light,
                        troughcolor=bg_medium,
@@ -243,7 +257,7 @@ class OCRImageReader:
         # Placeholder
         self.canvas_text = self.canvas.create_text(
             300, 200, 
-            text="📁\n\nNo image loaded\nClick 'Browse' to get started",
+            text="📷\n\nNo image loaded\nClick 'Browse' to get started",
             font=('Segoe UI', 14), fill='#666666', justify=CENTER
         )
         
@@ -295,11 +309,60 @@ class OCRImageReader:
                                                  variable=self.auto_detect_lang,
                                                  command=self.toggle_language_selection)
         self.auto_detect_check.grid(row=4, column=0, sticky=W)
+        
         self.preserve_check = ttk.Checkbutton(input_card,
-                                                 text="Preserve formatting (Code mode)",
-                                                 variable=self.preserve_format_var,
-                                                 command=self.on_preserve_toggle)
-        self.preserve_check.grid(row=5, column=0, sticky=W, pady=(6,0))
+                                             text="Preserve formatting (Code mode)",
+                                             variable=self.preserve_format_var,
+                                             command=self.on_preserve_toggle)
+        self.preserve_check.grid(row=5, column=0, sticky=W, pady=(6, 0))
+        
+        # Deep Learning OCR section
+        if DL_OCR_AVAILABLE:
+            separator = ttk.Separator(input_card, orient='horizontal')
+            separator.grid(row=6, column=0, sticky=(E, W), pady=(15, 15))
+            
+            dl_label = ttk.Label(input_card, text="Deep Learning OCR",
+                                style='Card.TLabel',
+                                font=('Segoe UI', 10, 'bold'))
+            dl_label.grid(row=7, column=0, sticky=W, pady=(0, 8))
+            
+            self.use_dl_check = ttk.Checkbutton(input_card, 
+                                                text="Use DL model (more accurate, slower)",
+                                                variable=self.use_dl_ocr,
+                                                command=self.on_dl_toggle)
+            self.use_dl_check.grid(row=8, column=0, sticky=W, pady=(0, 8))
+            
+            # Model selection
+            model_frame = ttk.Frame(input_card)
+            model_frame.grid(row=9, column=0, sticky=(E, W), pady=(0, 8))
+            
+            ttk.Label(model_frame, text="Backend:", style='Card.TLabel').pack(side=LEFT, padx=(20, 5))
+            
+            easyocr_radio = ttk.Radiobutton(model_frame, text="EasyOCR", 
+                                           variable=self.dl_model_name, 
+                                           value='easyocr')
+            easyocr_radio.pack(side=LEFT, padx=5)
+            
+            trocr_radio = ttk.Radiobutton(model_frame, text="TrOCR", 
+                                         variable=self.dl_model_name, 
+                                         value='trocr')
+            trocr_radio.pack(side=LEFT, padx=5)
+            
+            # TrOCR type selection
+            type_frame = ttk.Frame(input_card)
+            type_frame.grid(row=10, column=0, sticky=(E, W))
+            
+            ttk.Label(type_frame, text="Type:", style='Card.TLabel').pack(side=LEFT, padx=(20, 5))
+            
+            printed_radio = ttk.Radiobutton(type_frame, text="Printed", 
+                                           variable=self.dl_model_type, 
+                                           value='printed')
+            printed_radio.pack(side=LEFT, padx=5)
+            
+            handwritten_radio = ttk.Radiobutton(type_frame, text="Handwritten",
+                                               variable=self.dl_model_type, 
+                                               value='handwritten')
+            handwritten_radio.pack(side=LEFT, padx=5)
         
         # Action buttons
         action_frame = ttk.Frame(right_panel)
@@ -361,7 +424,7 @@ class OCRImageReader:
                                    command=self.result_text.yview)
         text_scroll.grid(row=0, column=1, sticky=(N, S))
         self.result_text.configure(yscrollcommand=text_scroll.set)
-        # Horizontal scrollbar for preserving long lines (useful for code)
+        
         h_text_scroll = ttk.Scrollbar(text_frame, orient=HORIZONTAL,
                                       command=self.result_text.xview)
         h_text_scroll.grid(row=1, column=0, sticky=(E, W))
@@ -378,7 +441,72 @@ class OCRImageReader:
                               foreground='#888888',
                               padding=(10, 8))
         status_bar.grid(row=0, column=0, sticky=(E, W))
-        
+    
+    def on_dl_toggle(self):
+        """Handle DL OCR checkbox toggle"""
+        if self.use_dl_ocr.get():
+            if self.dl_model is None:
+                self.status_var.set("⏳ Loading DL model...")
+                self.root.update_idletasks()
+                
+                try:
+                    model_name = self.dl_model_name.get()
+                    model_type = self.dl_model_type.get()
+                    
+                    # Get language from current selection
+                    lang_name = self.lang_combo.get()
+                    lang_code = self.languages.get(lang_name, 'eng')
+                    
+                    # Map Tesseract codes to model codes
+                    lang_map = {
+                        'eng': 'en',
+                        'ell': 'el',
+                        'spa': 'es',
+                        'fra': 'fr',
+                        'deu': 'de',
+                        'ita': 'it',
+                        'por': 'pt',
+                        'rus': 'ru',
+                        'chi_sim': 'ch_sim',
+                        'chi_tra': 'ch_tra',
+                        'jpn': 'ja',
+                        'kor': 'ko',
+                        'ara': 'ar',
+                        'hin': 'hi'
+                    }
+                    
+                    languages = [lang_map.get(lang_code, 'en')]
+                    
+                    self.dl_model = DLOCRModel(
+                        model_name=model_name,
+                        model_type=model_type,
+                        languages=languages
+                    )
+                    
+                    success = self.dl_model.load_model(
+                        progress_callback=lambda msg: self.status_var.set(f"⏳ {msg}")
+                    )
+                    
+                    if success:
+                        self.status_var.set("✅ DL model loaded successfully")
+                    else:
+                        self.use_dl_ocr.set(False)
+                        self.dl_model = None
+                        self.status_var.set("❌ Failed to load DL model")
+                        messagebox.showerror("Error", "Failed to load deep learning model")
+                        
+                except Exception as e:
+                    self.use_dl_ocr.set(False)
+                    self.dl_model = None
+                    self.status_var.set(f"❌ Error: {e}")
+                    messagebox.showerror("Error", f"Failed to load model:\n{str(e)}")
+        else:
+            # Unload model when unchecked
+            if self.dl_model:
+                self.dl_model.unload_model()
+                self.dl_model = None
+                self.status_var.set("Model unloaded")
+    
     def toggle_language_selection(self):
         """Toggle language combobox based on auto-detect checkbox"""
         if self.auto_detect_lang.get():
@@ -414,19 +542,15 @@ class OCRImageReader:
         try:
             self.current_image_path = path
             self.current_image = Image.open(path)
-            # Update path entry
+            
             self.path_entry.configure(state='normal')
             self.path_entry.delete(0, END)
             self.path_entry.insert(0, path)
             self.path_entry.configure(state='readonly')
             
-            # Display image
             self.display_image()
-            
-            # Enable read button
             self.read_btn.configure(state=NORMAL)
             
-            # Update status
             filename = os.path.basename(path)
             size = self.current_image.size
             self.status_var.set(f"📷 {filename} • {size[0]}×{size[1]} pixels")
@@ -440,23 +564,19 @@ class OCRImageReader:
         if not self.current_image:
             return
             
-        # Remove placeholder text if it exists
         try:
             self.canvas.delete(self.canvas_text)
         except:
             pass
         
-        # Get canvas dimensions
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         
-        # Minimum size check
         if canvas_width < 50 or canvas_height < 50:
             return
             
         img_width, img_height = self.current_image.size
         
-        # Calculate scaling factor with padding
         padding = 40
         scale_w = (canvas_width - padding) / img_width
         scale_h = (canvas_height - padding) / img_height
@@ -465,33 +585,26 @@ class OCRImageReader:
         new_width = max(int(img_width * scale), 1)
         new_height = max(int(img_height * scale), 1)
         
-        # Resize image
         resized_image = self.current_image.resize((new_width, new_height), 
                                                    Image.Resampling.LANCZOS)
         
-        # Convert to PhotoImage
         self.photo_image = ImageTk.PhotoImage(resized_image)
-        
-        # Clear canvas and display image
         self.canvas.delete("all")
         
-        # Center the image
         x = canvas_width // 2
         y = canvas_height // 2
         self.canvas.create_image(x, y, image=self.photo_image, anchor=CENTER)
-        
-        # Update scroll region
         self.canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
         
     def detect_language(self, image):
-        """Detect language from image using OSD (fallback to eng+ell if OSD fails)"""
+        """Detect language from image using OSD"""
         try:
             osd = pytesseract.image_to_osd(image)
             for line in osd.split('\n'):
                 if 'Script:' in line:
                     script = line.split(':')[1].strip()
                     script_map = {
-                        'Latin': 'eng+ell',   # fallback to both for mixed text
+                        'Latin': 'eng+ell',
                         'Greek': 'ell',
                         'Cyrillic': 'rus',
                         'Arabic': 'ara',
@@ -504,29 +617,24 @@ class OCRImageReader:
                     if lang:
                         return lang
                     else:
-                        print(f"Unknown script detected: {script}. Using eng+ell fallback.")
                         return 'eng+ell'
-            print("No script detected. Using eng+ell fallback.")
             return 'eng+ell'
         except Exception as e:
-            # Print the OSD error but still return a robust fallback
             print(f"OSD detection failed: {e}. Using eng+ell fallback.")
             return 'eng+ell'
-
-
     
     def is_probably_code(self, text):
-        """Heuristic to decide if extracted text looks like source code."""
+        """Heuristic to decide if extracted text looks like source code"""
         if not text:
             return False
-        indicators = ['#include', 'int main', 'std::', 'printf(', 'cout<<', '->', '::', '{', '}', ';', 'using namespace', 'template', 'class ']
+        indicators = ['#include', 'int main', 'std::', 'printf(', 'cout<<', 
+                     '->', '::', '{', '}', ';', 'using namespace', 'template', 'class ']
         score = sum(text.count(tok) for tok in indicators)
-        # Also count lines that end with semicolons
         semicolon_lines = sum(1 for line in text.splitlines() if line.strip().endswith(';'))
         return score >= 2 or semicolon_lines >= 2
 
     def reconstruct_text_from_data(self, data, code_mode=False):
-        """Reconstruct text from pytesseract.image_to_data output while preserving spacing."""
+        """Reconstruct text from pytesseract.image_to_data output"""
         lines = {}
         n = len(data.get('text', []))
         for i in range(n):
@@ -544,7 +652,6 @@ class OCRImageReader:
 
         sorted_lines = sorted(lines.items(), key=lambda kv: kv[1]['top'])
 
-        # Compute global average char width
         total_width = 0
         total_chars = 0
         first_lefts = []
@@ -566,7 +673,6 @@ class OCRImageReader:
                 out_lines.append('')
                 continue
 
-            # leading spaces relative to leftmost text
             leading_pixels = max(0, words[0]['left'] - global_min_first_left)
             leading_spaces = int(round(leading_pixels / avg_char_width))
             parts = []
@@ -591,174 +697,66 @@ class OCRImageReader:
 
         final_text = '\n'.join(out_lines)
 
-        # Only collapse spaces for non-code mode
         if not code_mode:
             final_text = re.sub(r'[ \t]+', ' ', final_text)
 
         return final_text
 
     def on_preserve_toggle(self):
-        """Adjust text widget wrap mode when user toggles preserve-formatting option."""
-        try:
-            if not self.preserve_format_var.get():
-                text = re.sub(r'[ \t]+', ' ', text)
-            if self.preserve_format_var.get():
-                self.result_text.configure(wrap=NONE)
-            else:
-                self.result_text.configure(wrap=WORD)
-        except Exception:
-            pass
-
+        """Adjust text widget wrap mode"""
+        if self.preserve_format_var.get():
+            self.result_text.configure(wrap=NONE)
+        else:
+            self.result_text.configure(wrap=WORD)
 
     def preprocess_image_for_ocr(self, pil_img, scale=2, code_mode=False):
-        """
-        Preprocess image to improve OCR accuracy for code/text.
-        - Converts to grayscale
-        - Resizes for better OCR
-        - Enhances contrast
-        - Binarizes adaptively
-        - Optionally dilates thin strokes
-        """
-
-        # Convert to grayscale
+        """Preprocess image to improve OCR accuracy"""
         img = pil_img.convert('L')
         img_cv = np.array(img)
 
-        # --- Step 1: Resize (scale up small fonts) ---
         if scale > 1:
             h, w = img_cv.shape
             img_cv = cv2.resize(img_cv, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
 
-        # --- Step 2: Adaptive thresholding (preserve fine symbols) ---
         img_cv = cv2.adaptiveThreshold(
             img_cv, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,
             31, 15
         )
 
-        # --- Step 3: Invert if background is dark ---
         if np.mean(img_cv) < 127:
             img_cv = cv2.bitwise_not(img_cv)
 
-        # --- Step 4: Enhance contrast ---
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         img_cv = clahe.apply(img_cv)
 
-        # --- Step 5: Optional dilation for code symbols ---
         if code_mode:
             kernel = np.ones((2, 2), np.uint8)
             img_cv = cv2.morphologyEx(img_cv, cv2.MORPH_OPEN, kernel)
 
-
-        # Convert back to PIL
         return Image.fromarray(img_cv)
-
-
-    def split_code_blocks(self,pil_img):
-        img = np.array(pil_img.convert('L'))
-        _, thresh = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        # Count non-white pixels per row
-        row_sum = np.sum(thresh < 128, axis=1)
-
-        # Rows with "almost no text" are separators
-        separators = np.where(row_sum < np.max(row_sum) * 0.05)[0]
-
-        blocks = []
-        prev = 0
-        for sep in separators:
-            if sep - prev > 30:  # ignore tiny gaps
-                block_img = pil_img.crop((0, prev, pil_img.width, sep))
-                blocks.append(block_img)
-            prev = sep
-        if prev < pil_img.height:
-            blocks.append(pil_img.crop((0, prev, pil_img.width, pil_img.height)))
-        return blocks
-
-    def clean_ocr_code(self,text: str) -> str:
-        fixes = [
-            (r"\baf[_]?\b", "if"),
-            (r"= =", "=="),
-            (r"- empty", ".empty()"),
-            (r"- top[{]?\)?", ".top()"),
-            (r"\bINT MAX\b", "INT_MAX"),
-            (r"int - n", "int n"),
-            (r"returndist", "return dist;"),
-            (r"returnparent", "return parent"),
-            (r"\bnjist\b", "n; i++"),
-            (r"LZlnionbyrank", "// union by rank (fix manually)"),
-            (r"priority_queuec", "priority_queue<"),
-            (r"pair<int,int> >", "pair<int,int>>"),
-        ]
-        for pattern, repl in fixes:
-            text = re.sub(pattern, repl, text)
-        return text
-    def auto_indent_cpp(self,code: str) -> str:
-        lines = code.splitlines()
-        indented = []
-        level = 0
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                indented.append("")
-                continue
-
-            # decrease indent before closing braces
-            if stripped.startswith("}"):
-                level = max(0, level - 1)
-
-            indented.append("    " * level + stripped)
-
-            # increase indent after opening braces
-            if stripped.endswith("{"):
-                level += 1
-
-        return "\n".join(indented)
-
-
 
     def postprocess_code(self, text):
         """Fix common OCR mistakes in code"""
         if not text:
             return text
 
-        # Normalize quotes/dashes
-        text = text.replace('“','"').replace('”','"').replace('‘',"'").replace('’',"'")
+        text = text.replace('"','"').replace('"','"').replace('',"'").replace('',"'")
         text = text.replace('–','-').replace('—','-')
 
-        # Fix common OCR misreads
         text = re.sub(r'\bCoot\b', 'cout', text)
         text = re.sub(r'\bvectarcints\b', 'vector<int>', text)
         text = re.sub(r'\bpa\b', 'pair', text)
         text = re.sub(r'\bINT MAX\b', 'INT_MAX', text)
-
-        # Fix pq-push / pq-pop
         text = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)-\s*(push|pop)\b', r'\1.\2', text)
         text = re.sub(r'priority\s+queue', 'priority_queue', text, flags=re.IGNORECASE)
-
-        # Fix angle brackets
         text = re.sub(r'\s*<\s*', '<', text)
         text = re.sub(r'\s*>\s*', '>', text)
 
-        # Normalize spacing around operators
-        ops = [r'\+', '-', r'\*', '/', '%', '&', r'\|', r'\^', '<<', '>>', '=', '<', '>']
-
-        for op in ops:
-            text = re.sub(rf'\s*{op}\s*', f' {op} ', text)
-
-        # Remove multiple spaces
-        text = re.sub(r'[ \t]+', ' ', text)
-
-        # Fix trailing spaces
-        text = '\n'.join(line.rstrip() for line in text.splitlines())
-        
-        text = self.clean_ocr_code(text)
-        if(self.is_probably_code(text)):
-            text = self.auto_indent_cpp(text)
         return text
+
     def copy_to_clipboard(self):
-        """Copy the extracted text to clipboard."""
+        """Copy extracted text to clipboard"""
         text = self.result_text.get("1.0", "end-1c")
         if text:
             self.root.clipboard_clear()
@@ -768,13 +766,12 @@ class OCRImageReader:
             self.status_var.set("⚠️ No text to copy")
 
     def save_text(self):
-        """Save the extracted text to a file."""
+        """Save extracted text to file"""
         text = self.result_text.get("1.0", "end-1c")
         if not text:
             self.status_var.set("⚠️ No text to save")
             return
 
-        from tkinter import filedialog
         file_path = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
@@ -788,7 +785,7 @@ class OCRImageReader:
                 self.status_var.set(f"❌ Failed to save file: {e}")
 
     def clear_all(self):
-        """Clear the image and extracted text."""
+        """Clear image and extracted text"""
         self.result_text.delete("1.0", "end")
         self.path_entry.configure(state='normal')
         self.path_entry.delete(0, 'end')
@@ -796,7 +793,7 @@ class OCRImageReader:
         self.canvas.delete("all")
         self.canvas_text = self.canvas.create_text(
             300, 200,
-            text="📁\n\nNo image loaded\nClick 'Browse' to get started",
+            text="📷\n\nNo image loaded\nClick 'Browse' to get started",
             font=('Segoe UI', 14), fill='#666666', justify='center'
         )
         self.current_image = None
@@ -804,56 +801,64 @@ class OCRImageReader:
         self.read_btn.configure(state='disabled')
         self.status_var.set("Ready to extract text from images")
 
+    def on_closing(self):
+        """Clean up before closing"""
+        if hasattr(self, 'dl_model') and self.dl_model:
+            self.dl_model.unload_model()
+        self.root.destroy()
+
     def read_image(self):
-        """Run OCR on the loaded image and display text."""
+        """Run OCR on the loaded image"""
         if not self.current_image:
             self.status_var.set("⚠️ No image loaded")
             return
 
         self.status_var.set("🔍 Extracting text...")
         self.root.update_idletasks()
-        code_mode = self.preserve_format_var.get()
-        img = self.preprocess_image_for_ocr(self.current_image,code_mode)
-
-        lang_code = 'eng'
-        if self.auto_detect_lang.get():
-            lang_code = self.detect_language(img)
-        else:
-            lang_name = self.lang_combo.get()
-            lang_code = self.languages.get(lang_name, 'eng')
-
-        # custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}[]();,.+-=*/&|<>_'
-        custom_config = (
-            r'--oem 3 --psm 6 '
-            r'-c preserve_interword_spaces=1 '
-            r'-c textord_min_linesize=2 '
-            r'-c textord_space_size_is_variable=0 '
-            r'-c textord_word_spacing=1 '
-        )
-
-
-
-
-        if code_mode:
-            # Use image_to_data for preserving layout
-            data = pytesseract.image_to_data(img, lang=lang_code, output_type=Output.DICT, config=custom_config)
-            text = self.reconstruct_text_from_data(data, code_mode=code_mode)
-            # Postprocess code-like text
-            text = self.postprocess_code(text)
         
-        else:
-            text = pytesseract.image_to_string(img, lang=lang_code, config=custom_config)
+        try:
+            if DL_OCR_AVAILABLE and self.use_dl_ocr.get() and self.dl_model:
+                text = self.dl_model.extract_text(self.current_image)
+            else:
+                code_mode = self.preserve_format_var.get()
+                img = self.preprocess_image_for_ocr(self.current_image, scale=2, code_mode=code_mode)
+                
+                lang_code = 'eng'
+                if self.auto_detect_lang.get():
+                    lang_code = self.detect_language(img)
+                else:
+                    lang_name = self.lang_combo.get()
+                    lang_code = self.languages.get(lang_name, 'eng')
+                
+                custom_config = (
+                    r'--oem 3 --psm 6 '
+                    r'-c preserve_interword_spaces=1 '
+                    r'-c textord_min_linesize=2 '
+                    r'-c textord_space_size_is_variable=0 '
+                    r'-c textord_word_spacing=1 '
+                )
+                
+                if code_mode:
+                    data = pytesseract.image_to_data(img, lang=lang_code, 
+                                                    output_type=Output.DICT, config=custom_config)
+                    text = self.reconstruct_text_from_data(data, code_mode=code_mode)
+                    text = self.postprocess_code(text)
+                else:
+                    text = pytesseract.image_to_string(img, lang=lang_code, config=custom_config)
+            
+            self.result_text.delete("1.0", "end")
+            self.result_text.insert("1.0", text)
+            self.status_var.set("✅ Text extraction complete")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"OCR failed:\n{str(e)}")
+            self.status_var.set(f"❌ Error: {e}")
 
-        self.result_text.delete("1.0", "end")
-        self.result_text.insert("1.0", text)
-        self.status_var.set("✅ Text extraction complete")
+
 def main():
     import sys
-    import os
     import ctypes
-    from tkinter import Tk
 
-    # Enable DPI awareness on Windows
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
@@ -861,20 +866,16 @@ def main():
 
     root = Tk()
 
-    # Determine icon path
     icon_path = None
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # Running as PyInstaller exe
         icon_path = os.path.join(sys._MEIPASS, 'ocr.ico')
     else:
-        # Running as a script
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ocr.ico')
 
     if icon_path and os.path.exists(icon_path):
         try:
             root.iconbitmap(icon_path)
         except Exception:
-            # silently fail if icon cannot be loaded
             pass
 
     app = OCRImageReader(root)

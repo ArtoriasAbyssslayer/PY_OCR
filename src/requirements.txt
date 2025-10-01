@@ -1,0 +1,33 @@
+# PyTorch with CUDA 12.6 support
+--index-url https://download.pytorch.org/whl/cu126
+torch>=2.5.0
+torchvision>=0.20.0
+
+# Core OCR dependencies
+pytesseract>=0.3.10
+Pillow>=10.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Deep Learning OCR backends
+transformers>=4.35.0
+easyocr>=1.7.0
+paddleocr>=2.7.0
+python-doctr[torch]>=0.7.0
+
+# GUI dependencies
+tk>=0.1.0
+
+# Additional utilities
+scipy>=1.11.0
+scikit-image>=0.22.0
+
+# Optional: Accelerate for faster model loading
+accelerate>=0.24.0
+
+# Note: You also need to install Tesseract OCR separately:
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
+# or use bultin winget package manager
+# Winget: winget install --id=UB-Mannheim.TesseractOCR  -e
+# Linux: sudo apt-get install tesseract-ocr
+# macOS: brew install tesseract
