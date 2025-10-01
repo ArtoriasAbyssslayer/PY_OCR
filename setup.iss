@@ -1,10 +1,9 @@
 #define MyAppName "OCR Image Reader"
-#define MyAppVersion "1.1"
+#define MyAppVersion "1.0.5"
 #define MyAppPublisher "cfilant.io"
 #define MyAppExeName "ocr_image_reader.exe"
 #define MyAppIcon "ocr.ico"
-#define SourcePath ExpandConstant('{#SourcePath}')   ; folder where ISS script is located
-
+#define SourcePath "."
 
 [Setup]
 SetupIconFile={#MyAppIcon}
@@ -35,7 +34,8 @@ Source: "{#SourcePath}\{#MyAppIcon}"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Tesseract OCR files
 Source: "{#SourcePath}\tesseract\*"; DestDir: "{app}\tesseract"; Flags: ignoreversion recursesubdirs createallsubdirs
-
+; DL Model Pretrained parameters
+Source: "{#SourcePath}\src\models\*"; DestDir: "{app}\models"; Flags:ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
