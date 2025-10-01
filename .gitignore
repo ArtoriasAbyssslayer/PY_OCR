@@ -1,0 +1,8 @@
+ocr_image_reader.exe
+ocr_image_reader.spec
+**/tesseract/
+ocr.ico
+**/build/
+/Output/
+**/__pycache__/
+**/models/
