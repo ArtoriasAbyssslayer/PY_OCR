@@ -8,15 +8,124 @@ from PIL import ImageFilter, ImageOps
 import os
 import cv2
 import numpy as np
+import threading
 
 # Add after existing imports
 try:
-    from dl_ocr import DLOCRModel
+    from dl_ocr import DLOCRModel, download_all_models
     DL_OCR_AVAILABLE = True
 except ImportError:
     DL_OCR_AVAILABLE = False
     print("Deep Learning OCR not available. Install: pip install torch transformers easyocr")
     
+
+class ModelDownloadDialog:
+    """Dialog for downloading DL models"""
+    def __init__(self, parent, cache_dir=None):
+        self.parent = parent
+        self.cache_dir = cache_dir
+        self.window = Toplevel(parent)
+        self.window.title("Download Models")
+        self.window.geometry("600x480")
+        self.window.transient(parent)
+        self.window.grab_set()
+
+        # Dark theme background
+        self.window.configure(bg='#1e1e1e')
+        style = ttk.Style(self.window)
+        style.theme_use('clam')
+
+        # Try to set same app icon
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ocr.ico')
+            if os.path.exists(icon_path):
+                self.window.iconbitmap(icon_path)
+        except Exception:
+            pass
+
+        # Center the dialog
+        self.window.update_idletasks()
+        x = (self.window.winfo_screenwidth() // 2) - (600 // 2)
+        y = (self.window.winfo_screenheight() // 2) - (480 // 2)
+        self.window.geometry(f"600x480+{x}+{y}")
+
+        self.setup_ui()
+        self.download_complete = False
+
+        
+    def setup_ui(self):
+        """Setup dialog UI"""
+        # Title
+        title_label = ttk.Label(self.window, 
+                               text="Download Deep Learning Models",
+                               font=('Segoe UI', 14, 'bold'))
+        title_label.pack(pady=(20, 10))
+        
+        # Info text
+        info_label = ttk.Label(self.window,
+                              text="This will download the following models:\n"
+                                   "• TrOCR (Printed)\n"
+                                   "• TrOCR (Handwritten)\n"
+                                   "• EasyOCR\n\n"
+                                   "Download size: ~500MB\n"
+                                   "This may take several minutes.",
+                              justify=CENTER)
+        info_label.pack(pady=10)
+        
+        # Progress bar
+        self.progress_var = StringVar(value="Ready to download")
+        progress_label = ttk.Label(self.window, textvariable=self.progress_var)
+        progress_label.pack(pady=10)
+        
+        self.progress_bar = ttk.Progressbar(self.window, mode='indeterminate', length=400)
+        self.progress_bar.pack(pady=10)
+        
+        # Buttons
+        button_frame = ttk.Frame(self.window)
+        button_frame.pack(pady=20)
+        
+        self.download_btn = ttk.Button(button_frame, 
+                                       text="Download",
+                                       command=self.start_download)
+        self.download_btn.pack(side=LEFT, padx=5)
+        
+        self.close_btn = ttk.Button(button_frame,
+                                    text="Close",
+                                    command=self.close,
+                                    state=DISABLED)
+        self.close_btn.pack(side=LEFT, padx=5)
+        
+    def update_progress(self, message):
+        """Update progress message"""
+        self.progress_var.set(message)
+        self.window.update_idletasks()
+        
+    def start_download(self):
+        """Start downloading models in background thread"""
+        self.download_btn.configure(state=DISABLED)
+        self.progress_bar.start()
+        
+        def download_thread():
+            try:
+                download_all_models(
+                    cache_dir=self.cache_dir,
+                    progress_callback=self.update_progress
+                )
+                self.download_complete = True
+                self.update_progress("✓ All models downloaded successfully!")
+            except Exception as e:
+                self.update_progress(f"✗ Error: {str(e)}")
+            finally:
+                self.progress_bar.stop()
+                self.close_btn.configure(state=NORMAL)
+        
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
+        
+    def close(self):
+        """Close the dialog"""
+        self.window.destroy()
+
 
 class OCRImageReader:
     def __init__(self, root):
@@ -57,6 +166,7 @@ class OCRImageReader:
         self.use_dl_ocr = BooleanVar(value=False)
         self.dl_model_type = StringVar(value='printed')
         self.dl_model_name = StringVar(value='easyocr')
+        self.models_dir = os.path.join(os.path.dirname(__file__), 'models')
         
         # Configure style
         self.setup_styles()
@@ -257,7 +367,7 @@ class OCRImageReader:
         # Placeholder
         self.canvas_text = self.canvas.create_text(
             300, 200, 
-            text="📷\n\nNo image loaded\nClick 'Browse' to get started",
+            text="No image loaded\nClick 'Browse' to get started",
             font=('Segoe UI', 14), fill='#666666', justify=CENTER
         )
         
@@ -287,7 +397,7 @@ class OCRImageReader:
                                      font=('Segoe UI', 9))
         self.path_entry.grid(row=0, column=0, sticky=(E, W), padx=(0, 10))
         
-        browse_btn = ttk.Button(file_frame, text="📁 Browse", 
+        browse_btn = ttk.Button(file_frame, text="Browse", 
                                command=self.open_file,
                                style='Secondary.TButton')
         browse_btn.grid(row=0, column=1, sticky=(E, W))
@@ -321,10 +431,19 @@ class OCRImageReader:
             separator = ttk.Separator(input_card, orient='horizontal')
             separator.grid(row=6, column=0, sticky=(E, W), pady=(15, 15))
             
-            dl_label = ttk.Label(input_card, text="Deep Learning OCR",
+            dl_header_frame = ttk.Frame(input_card)
+            dl_header_frame.grid(row=7, column=0, sticky=(E, W), pady=(0, 8))
+            dl_header_frame.columnconfigure(0, weight=1)
+            
+            dl_label = ttk.Label(dl_header_frame, text="Deep Learning OCR",
                                 style='Card.TLabel',
                                 font=('Segoe UI', 10, 'bold'))
-            dl_label.grid(row=7, column=0, sticky=W, pady=(0, 8))
+            dl_label.pack(side=LEFT)
+            
+            download_btn = ttk.Button(dl_header_frame, text="Download Models",
+                                     command=self.open_download_dialog,
+                                     style='Secondary.TButton')
+            download_btn.pack(side=RIGHT)
             
             self.use_dl_check = ttk.Checkbutton(input_card, 
                                                 text="Use DL model (more accurate, slower)",
@@ -369,7 +488,7 @@ class OCRImageReader:
         action_frame.grid(row=1, column=0, sticky=(E, W), pady=(0, 15))
         action_frame.columnconfigure(0, weight=1)
         
-        self.read_btn = ttk.Button(action_frame, text="🔍 Extract Text", 
+        self.read_btn = ttk.Button(action_frame, text="Extract Text", 
                                    command=self.read_image, 
                                    style='Primary.TButton', 
                                    state=DISABLED)
@@ -382,17 +501,17 @@ class OCRImageReader:
         secondary_frame.columnconfigure(1, weight=1)
         secondary_frame.columnconfigure(2, weight=1)
         
-        copy_btn = ttk.Button(secondary_frame, text="📋 Copy", 
+        copy_btn = ttk.Button(secondary_frame, text="Copy", 
                              command=self.copy_to_clipboard,
                              style='Secondary.TButton')
         copy_btn.grid(row=0, column=0, sticky=(E, W), padx=(0, 5))
         
-        save_btn = ttk.Button(secondary_frame, text="💾 Save", 
+        save_btn = ttk.Button(secondary_frame, text="Save", 
                              command=self.save_text,
                              style='Secondary.TButton')
         save_btn.grid(row=0, column=1, sticky=(E, W), padx=(0, 5))
         
-        clear_btn = ttk.Button(secondary_frame, text="🗑️ Clear", 
+        clear_btn = ttk.Button(secondary_frame, text="Clear", 
                               command=self.clear_all,
                               style='Secondary.TButton')
         clear_btn.grid(row=0, column=2, sticky=(E, W))
@@ -442,64 +561,96 @@ class OCRImageReader:
                               padding=(10, 8))
         status_bar.grid(row=0, column=0, sticky=(E, W))
     
+    def open_download_dialog(self):
+        """Open model download dialog"""
+        try:
+         # Use same icon as main app
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ocr.ico')
+            if os.path.exists(icon_path):
+                self.window.iconbitmap(icon_path)
+        except Exception:
+            pass
+
+        dialog = ModelDownloadDialog(self.root, cache_dir=self.models_dir)
+        self.root.wait_window(dialog.window)
+        
+        if dialog.download_complete:
+            messagebox.showinfo("Success", 
+                              "Models downloaded successfully!\n"
+                              "You can now use Deep Learning OCR.")
+    
     def on_dl_toggle(self):
-        """Handle DL OCR checkbox toggle"""
+        """Handle DL OCR checkbox toggle - now with threaded loading"""
         if self.use_dl_ocr.get():
             if self.dl_model is None:
-                self.status_var.set("⏳ Loading DL model...")
+                self.status_var.set("Loading DL model...")
                 self.root.update_idletasks()
                 
-                try:
-                    model_name = self.dl_model_name.get()
-                    model_type = self.dl_model_type.get()
-                    
-                    # Get language from current selection
-                    lang_name = self.lang_combo.get()
-                    lang_code = self.languages.get(lang_name, 'eng')
-                    
-                    # Map Tesseract codes to model codes
-                    lang_map = {
-                        'eng': 'en',
-                        'ell': 'el',
-                        'spa': 'es',
-                        'fra': 'fr',
-                        'deu': 'de',
-                        'ita': 'it',
-                        'por': 'pt',
-                        'rus': 'ru',
-                        'chi_sim': 'ch_sim',
-                        'chi_tra': 'ch_tra',
-                        'jpn': 'ja',
-                        'kor': 'ko',
-                        'ara': 'ar',
-                        'hin': 'hi'
-                    }
-                    
-                    languages = [lang_map.get(lang_code, 'en')]
-                    
-                    self.dl_model = DLOCRModel(
-                        model_name=model_name,
-                        model_type=model_type,
-                        languages=languages
-                    )
-                    
-                    success = self.dl_model.load_model(
-                        progress_callback=lambda msg: self.status_var.set(f"⏳ {msg}")
-                    )
-                    
-                    if success:
-                        self.status_var.set("✅ DL model loaded successfully")
-                    else:
-                        self.use_dl_ocr.set(False)
-                        self.dl_model = None
-                        self.status_var.set("❌ Failed to load DL model")
-                        messagebox.showerror("Error", "Failed to load deep learning model")
+                # Disable UI during load
+                self.read_btn.configure(state=DISABLED)
+                
+                def load_in_thread():
+                    try:
+                        model_name = self.dl_model_name.get()
+                        model_type = self.dl_model_type.get()
                         
-                except Exception as e:
-                    self.use_dl_ocr.set(False)
-                    self.dl_model = None
-                    self.status_var.set(f"❌ Error: {e}")
-                    messagebox.showerror("Error", f"Failed to load model:\n{str(e)}")
+                        # Get language from current selection
+                        lang_name = self.lang_combo.get()
+                        lang_code = self.languages.get(lang_name, 'eng')
+                        
+                        # Map Tesseract codes to model codes
+                        lang_map = {
+                            'eng': 'en', 'ell': 'el', 'spa': 'es', 'fra': 'fr',
+                            'deu': 'de', 'ita': 'it', 'por': 'pt', 'rus': 'ru',
+                            'chi_sim': 'ch_sim', 'chi_tra': 'ch_tra',
+                            'jpn': 'ja', 'kor': 'ko', 'ara': 'ar', 'hin': 'hi'
+                        }
+                        
+                        languages = [lang_map.get(lang_code, 'en')]
+                        
+                        self.dl_model = DLOCRModel(
+                            model_name=model_name,
+                            model_type=model_type,
+                            languages=languages,
+                            cache_dir=self.models_dir
+                        )
+                        
+                        success = self.dl_model.load_model(
+                            progress_callback=lambda msg: self.root.after(0, 
+                                lambda: self.status_var.set(msg))
+                        )
+                        
+                        if success:
+                            self.root.after(0, lambda: self.status_var.set(
+                                "DL model loaded successfully"))
+                            self.root.after(0, lambda: self.read_btn.configure(
+                                state=NORMAL if self.current_image else DISABLED))
+                        else:
+                            self.root.after(0, lambda: self.use_dl_ocr.set(False))
+                            self.dl_model = None
+                            self.root.after(0, lambda: self.status_var.set(
+                                "Failed to load DL model"))
+                            self.root.after(0, lambda: messagebox.showerror("Error",
+                                "Failed to load deep learning model.\n\n"
+                                "Try downloading the models first using the\n"
+                                "'Download Models' button."))
+                            self.root.after(0, lambda: self.read_btn.configure(
+                                state=NORMAL if self.current_image else DISABLED))
+                                
+                    except Exception as e:
+                        self.root.after(0, lambda: self.use_dl_ocr.set(False))
+                        self.dl_model = None
+                        error_msg = str(e)
+                        self.root.after(0, lambda: self.status_var.set(f"Error: {error_msg}"))
+                        self.root.after(0, lambda: messagebox.showerror("Error",
+                            f"Failed to load model:\n\n{error_msg}\n\n"
+                            "Check your internet connection and try\n"
+                            "downloading the models first."))
+                        self.root.after(0, lambda: self.read_btn.configure(
+                            state=NORMAL if self.current_image else DISABLED))
+                
+                thread = threading.Thread(target=load_in_thread, daemon=True)
+                thread.start()
         else:
             # Unload model when unchecked
             if self.dl_model:
@@ -553,11 +704,11 @@ class OCRImageReader:
             
             filename = os.path.basename(path)
             size = self.current_image.size
-            self.status_var.set(f"📷 {filename} • {size[0]}×{size[1]} pixels")
+            self.status_var.set(f"{filename} - {size[0]}x{size[1]} pixels")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load image:\n{str(e)}")
-            self.status_var.set("❌ Error loading image")
+            self.status_var.set("Error loading image")
             
     def display_image(self):
         """Display image on canvas with proper scaling"""
@@ -735,6 +886,21 @@ class OCRImageReader:
             img_cv = cv2.morphologyEx(img_cv, cv2.MORPH_OPEN, kernel)
 
         return Image.fromarray(img_cv)
+    def preprocess_image_for_handwriting(self, pil_img):
+        img = pil_img.convert("L")
+        img_cv = np.array(img)
+
+        # Resize larger
+        h, w = img_cv.shape
+        img_cv = cv2.resize(img_cv, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+
+        # Strong binarization
+        _, img_cv = cv2.threshold(img_cv, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Remove noise
+        img_cv = cv2.medianBlur(img_cv, 3)
+
+        return Image.fromarray(img_cv)
 
     def postprocess_code(self, text):
         """Fix common OCR mistakes in code"""
@@ -742,7 +908,7 @@ class OCRImageReader:
             return text
 
         text = text.replace('"','"').replace('"','"').replace('',"'").replace('',"'")
-        text = text.replace('–','-').replace('—','-')
+        text = text.replace('—','-').replace('–','-')
 
         text = re.sub(r'\bCoot\b', 'cout', text)
         text = re.sub(r'\bvectarcints\b', 'vector<int>', text)
@@ -761,15 +927,15 @@ class OCRImageReader:
         if text:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
-            self.status_var.set("✅ Text copied to clipboard")
+            self.status_var.set("Text copied to clipboard")
         else:
-            self.status_var.set("⚠️ No text to copy")
+            self.status_var.set("No text to copy")
 
     def save_text(self):
         """Save extracted text to file"""
         text = self.result_text.get("1.0", "end-1c")
         if not text:
-            self.status_var.set("⚠️ No text to save")
+            self.status_var.set("No text to save")
             return
 
         file_path = filedialog.asksaveasfilename(
@@ -780,9 +946,9 @@ class OCRImageReader:
             try:
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(text)
-                self.status_var.set(f"💾 Text saved to {file_path}")
+                self.status_var.set(f"Text saved to {file_path}")
             except Exception as e:
-                self.status_var.set(f"❌ Failed to save file: {e}")
+                self.status_var.set(f"Failed to save file: {e}")
 
     def clear_all(self):
         """Clear image and extracted text"""
@@ -793,7 +959,7 @@ class OCRImageReader:
         self.canvas.delete("all")
         self.canvas_text = self.canvas.create_text(
             300, 200,
-            text="📷\n\nNo image loaded\nClick 'Browse' to get started",
+            text="No image loaded\nClick 'Browse' to get started",
             font=('Segoe UI', 14), fill='#666666', justify='center'
         )
         self.current_image = None
@@ -807,6 +973,8 @@ class OCRImageReader:
             self.dl_model.unload_model()
         self.root.destroy()
 
+    
+
     def read_image(self):
         """Run OCR on the loaded image"""
         if not self.current_image:
@@ -815,21 +983,47 @@ class OCRImageReader:
 
         self.status_var.set("🔍 Extracting text...")
         self.root.update_idletasks()
-        
+
         try:
+            text = ""  # initialize
+
+            # --- Deep Learning OCR path ---
             if DL_OCR_AVAILABLE and self.use_dl_ocr.get() and self.dl_model:
-                text = self.dl_model.extract_text(self.current_image)
+                # Convert PIL → NumPy (RGB)
+                #img_cv = np.array(self.current_image.convert("RGB"))
+
+                # Get selected language
+                lang_name = self.lang_combo.get()
+                lang_code = self.languages.get(lang_name, 'eng')
+
+                lang_map = {
+                    'eng': 'en', 'ell': 'el', 'spa': 'es', 'fra': 'fr',
+                    'deu': 'de', 'ita': 'it', 'por': 'pt', 'rus': 'ru',
+                    'chi_sim': 'ch_sim', 'chi_tra': 'ch_tra',
+                    'jpn': 'ja', 'kor': 'ko', 'ara': 'ar', 'hin': 'hi'
+                }
+                dl_lang = lang_map.get(lang_code, 'en')
+
+                # Extract with DL OCR
+                text = self.dl_model.extract_text(self.current_image, languages=[dl_lang])
+
+            # --- Tesseract OCR path ---
             else:
                 code_mode = self.preserve_format_var.get()
-                img = self.preprocess_image_for_ocr(self.current_image, scale=2, code_mode=code_mode)
-                
-                lang_code = 'eng'
+
+                # Preprocess image
+                img = self.preprocess_image_for_ocr(
+                    self.current_image, scale=2, code_mode=code_mode
+                )
+                img = self.preprocess_image_for_handwriting(self.current_image)
+                # Detect or select language
                 if self.auto_detect_lang.get():
                     lang_code = self.detect_language(img)
                 else:
                     lang_name = self.lang_combo.get()
                     lang_code = self.languages.get(lang_name, 'eng')
-                
+
+                # Tesseract config
                 custom_config = (
                     r'--oem 3 --psm 6 '
                     r'-c preserve_interword_spaces=1 '
@@ -837,22 +1031,25 @@ class OCRImageReader:
                     r'-c textord_space_size_is_variable=0 '
                     r'-c textord_word_spacing=1 '
                 )
-                
+
                 if code_mode:
-                    data = pytesseract.image_to_data(img, lang=lang_code, 
-                                                    output_type=Output.DICT, config=custom_config)
-                    text = self.reconstruct_text_from_data(data, code_mode=code_mode)
+                    data = pytesseract.image_to_data(
+                        img, lang=lang_code, output_type=Output.DICT, config=custom_config
+                    )
+                    text = self.reconstruct_text_from_data(data, code_mode=True)
                     text = self.postprocess_code(text)
                 else:
                     text = pytesseract.image_to_string(img, lang=lang_code, config=custom_config)
-            
+
+            # --- Update UI with results ---
             self.result_text.delete("1.0", "end")
-            self.result_text.insert("1.0", text)
+            self.result_text.insert("1.0", text.strip())
             self.status_var.set("✅ Text extraction complete")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"OCR failed:\n{str(e)}")
             self.status_var.set(f"❌ Error: {e}")
+
 
 
 def main():
