@@ -3,6 +3,8 @@ from pathlib import Path
 import torch
 from PIL import Image
 import numpy as np
+import unicodedata
+
 
 # Hugging Face
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
@@ -75,42 +77,129 @@ class DLOCRModel:
             else:
                 raise ValueError(f"Unknown model: {self.model_name}")
         except Exception as e:
-            print(f"Error loading model: {e}")
+            error_msg = str(e)
+            print(f"Error loading model: {error_msg}")
+            
+            # Provide helpful error messages
+            if "Failed to resolve" in error_msg or "NameResolutionError" in error_msg:
+                user_msg = "Network error: Cannot connect to model repository. Check your internet connection."
+            elif "No module named" in error_msg:
+                user_msg = f"Missing dependency. Install with: pip install {self.model_name}"
+            else:
+                user_msg = f"Error: {error_msg}"
+            
             if progress_callback:
-                progress_callback(f"Error: {e}")
+                progress_callback(user_msg)
             return False
 
     # ------------------- Loaders -------------------
 
     def _load_trocr(self, progress_callback=None):
-        """Load Hugging Face TrOCR"""
+        """Load Hugging Face TrOCR with better error handling"""
         model_name = (
             "microsoft/trocr-base-handwritten"
             if self.model_type == "handwritten"
             else "microsoft/trocr-base-printed"
         )
+        
         if progress_callback:
             progress_callback(f"Loading TrOCR model: {model_name}")
 
-        self.processor = TrOCRProcessor.from_pretrained(
-            model_name, cache_dir=str(self.cache_dir)
-        )
-        self.model = VisionEncoderDecoderModel.from_pretrained(
-            model_name, cache_dir=str(self.cache_dir)
-        )
+        try:
+            # Set environment variable to use standard HTTP instead of XET
+            os.environ['HF_HUB_DISABLE_XET'] = '1'
+            
+            # Try to load with timeout and retry logic
+            from huggingface_hub import snapshot_download
+            
+            if progress_callback:
+                progress_callback("Downloading model files (this may take a few minutes)...")
+            
+            # Download model files first
+            local_dir = snapshot_download(
+                repo_id=model_name,
+                cache_dir=str(self.cache_dir),
+                resume_download=True,
+                local_files_only=False
+            )
+            
+            if progress_callback:
+                progress_callback("Loading processor...")
+            
+            self.processor = TrOCRProcessor.from_pretrained(
+                model_name, 
+                cache_dir=str(self.cache_dir),
+                local_files_only=True
+            )
+            
+            if progress_callback:
+                progress_callback("Loading model weights...")
+            
+            self.model = VisionEncoderDecoderModel.from_pretrained(
+                model_name, 
+                cache_dir=str(self.cache_dir),
+                local_files_only=True
+            )
 
-        self.model.to(self.device)
-        self.model.eval()
-        self.is_loaded = True
-        return True
+            self.model.to(self.device)
+            self.model.eval()
+            self.is_loaded = True
+            
+            if progress_callback:
+                progress_callback("TrOCR model loaded successfully!")
+            
+            return True
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "local_files_only" in error_msg or "offline mode" in error_msg:
+                # Try again without local_files_only
+                try:
+                    if progress_callback:
+                        progress_callback("Retrying download with fallback method...")
+                    
+                    self.processor = TrOCRProcessor.from_pretrained(
+                        model_name, 
+                        cache_dir=str(self.cache_dir),
+                        force_download=False,
+                        resume_download=True
+                    )
+                    
+                    self.model = VisionEncoderDecoderModel.from_pretrained(
+                        model_name, 
+                        cache_dir=str(self.cache_dir),
+                        force_download=False,
+                        resume_download=True
+                    )
+                    
+                    self.model.to(self.device)
+                    self.model.eval()
+                    self.is_loaded = True
+                    return True
+                except:
+                    raise e
+            else:
+                raise e
 
     def _load_easyocr(self, progress_callback=None):
         if easyocr is None:
             raise ImportError("EasyOCR is not installed. Run `pip install easyocr`.")
         if progress_callback:
             progress_callback("Loading EasyOCR reader...")
-        self.model = easyocr.Reader(self.languages, gpu=(self.device == 'cuda'))
+        
+        # EasyOCR downloads models automatically on first use
+        model_storage_directory = os.path.join(str(self.cache_dir), 'easyocr')
+        os.makedirs(model_storage_directory, exist_ok=True)
+        
+        self.model = easyocr.Reader(
+            self.languages, 
+            gpu=(self.device == 'cuda'),
+            model_storage_directory=model_storage_directory
+        )
         self.is_loaded = True
+        
+        if progress_callback:
+            progress_callback("EasyOCR loaded successfully!")
         return True
 
     def _load_paddleocr(self, progress_callback=None):
@@ -118,10 +207,18 @@ class DLOCRModel:
             raise ImportError("PaddleOCR is not installed. Run `pip install paddleocr`.")
         if progress_callback:
             progress_callback("Loading PaddleOCR...")
-        # Map first language or default to 'en'
+        
         lang = self.languages[0] if self.languages else 'en'
-        self.model = PaddleOCR(use_angle_cls=True, lang=lang, use_gpu=(self.device == 'cuda'))
+        self.model = PaddleOCR(
+            use_angle_cls=True, 
+            lang=lang, 
+            use_gpu=(self.device == 'cuda'),
+            show_log=False
+        )
         self.is_loaded = True
+        
+        if progress_callback:
+            progress_callback("PaddleOCR loaded successfully!")
         return True
 
     def _load_doctr(self, progress_callback=None):
@@ -129,24 +226,27 @@ class DLOCRModel:
             raise ImportError("docTR is not installed. Run `pip install python-doctr[torch]`.")
         if progress_callback:
             progress_callback("Loading docTR...")
+        
         self.model = ocr_predictor(pretrained=True)
         self.is_loaded = True
+        
+        if progress_callback:
+            progress_callback("docTR loaded successfully!")
         return True
 
     # ------------------- Text Extraction -------------------
-
-    def extract_text(self, image):
+    def normalize_text(text):
+        return unicodedata.normalize("NFC", text)
+    def extract_text(self, image, languages=None):
         """
         Extract text from a PIL Image
-        
-        Args:
-            image: PIL Image object
-            
-        Returns:
-            str: Extracted text
         """
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        # Allow runtime override of languages
+        if languages is not None:
+            self.languages = languages
 
         if self.model_name == 'trocr':
             return self._extract_trocr(image)
@@ -157,9 +257,9 @@ class DLOCRModel:
         elif self.model_name == 'doctr':
             return self._extract_doctr(image)
 
+        
     def _extract_trocr(self, image):
         """Extract text using TrOCR"""
-        # Convert to RGB if needed
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
@@ -174,21 +274,17 @@ class DLOCRModel:
 
     def _extract_easyocr(self, image):
         """Extract text using EasyOCR"""
-        # Convert PIL to numpy array
         img_array = np.array(image)
         results = self.model.readtext(img_array)
         
-        # Extract text from results
         text_lines = [result[1] for result in results]
         return '\n'.join(text_lines)
 
     def _extract_paddleocr(self, image):
         """Extract text using PaddleOCR"""
-        # Convert PIL to numpy array
         img_array = np.array(image)
         results = self.model.ocr(img_array, cls=True)
         
-        # Extract text from results
         text_lines = []
         if results and results[0]:
             for line in results[0]:
@@ -199,13 +295,9 @@ class DLOCRModel:
 
     def _extract_doctr(self, image):
         """Extract text using docTR"""
-        # Convert PIL to numpy array
         img_array = np.array(image)
-        
-        # Process with docTR
         result = self.model([img_array])
         
-        # Extract text
         text_lines = []
         for page in result.pages:
             for block in page.blocks:
@@ -240,7 +332,52 @@ class DLOCRModel:
         print("Model unloaded and memory cleared")
 
 
-# Convenience function
+# Pre-download utility
+def download_all_models(cache_dir=None, progress_callback=None):
+    """
+    Pre-download all available models
+    
+    Args:
+        cache_dir: Directory to store models
+        progress_callback: Function to call with progress updates
+    """
+    if cache_dir is None:
+        cache_dir = os.path.join(os.path.dirname(__file__), 'models')
+    
+    models_to_download = [
+        ('trocr', 'printed', ['en']),
+        ('trocr', 'handwritten', ['en']),
+        ('easyocr', 'printed', ['en']),
+    ]
+    
+    for model_name, model_type, languages in models_to_download:
+        try:
+            if progress_callback:
+                progress_callback(f"Downloading {model_name} ({model_type})...")
+            
+            model = DLOCRModel(
+                model_name=model_name,
+                model_type=model_type,
+                languages=languages,
+                cache_dir=cache_dir
+            )
+            
+            success = model.load_model(progress_callback)
+            
+            if success:
+                model.unload_model()
+                if progress_callback:
+                    progress_callback(f"✓ {model_name} downloaded successfully")
+            else:
+                if progress_callback:
+                    progress_callback(f"✗ Failed to download {model_name}")
+                    
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"✗ Error downloading {model_name}: {str(e)}")
+
+
+# Convenience functions
 def create_ocr_model(model_name='easyocr', languages=None, cache_dir=None):
     """
     Factory function to create OCR model
@@ -270,13 +407,20 @@ def quick_ocr(image_path, model_name='easyocr', languages=None):
     Returns:
         str: Extracted text
     """
-    languages = languages or ['en']
-    model = create_ocr_model(model_name, languages)
+    lang_code = self.languages.get(lang_name, 'eng')
+    lang_map = {
+                    'eng': 'en', 'ell': 'el', 'spa': 'es', 'fra': 'fr',
+                    'deu': 'de', 'ita': 'it', 'por': 'pt', 'rus': 'ru',
+                    'chi_sim': 'ch_sim', 'chi_tra': 'ch_tra',
+                    'jpn': 'ja', 'kor': 'ko', 'ara': 'ar', 'hin': 'hi'
+                }
+    dl_lang = lang_map.get(lang_code, 'en')
+    model = create_ocr_model(model_name, languages=[dl_lang])
     model.load_model()
     
     image = Image.open(image_path)
-    text = model.extract_text(image)
-    
+    text = model.extract_text(image,languages=[dl_lang])
+    text = model.normalize_text(text)
     model.unload_model()
     return text
 
@@ -287,23 +431,31 @@ if __name__ == "__main__":
     
     print("Deep Learning OCR Module - Multi-Model Test")
     print("=" * 60)
+    
+    if '--download-all' in sys.argv:
+        print("\nDownloading all models...")
+        download_all_models(progress_callback=lambda msg: print(f"  {msg}"))
+        print("\nAll models downloaded!")
+        sys.exit(0)
+    
     print("\nAvailable Models:")
     for name, desc in DLOCRModel.AVAILABLE_MODELS.items():
         print(f"  • {name}: {desc}")
     
-    # Test with first available model
-    test_model = 'easyocr'  # Change this to test different models
+    test_model = 'trocr'
+    if len(sys.argv) > 1 and sys.argv[1] in DLOCRModel.AVAILABLE_MODELS:
+        test_model = sys.argv[1]
     
     print(f"\n{'='*60}")
     print(f"Testing {test_model}...")
     print(f"{'='*60}\n")
     
-    model = DLOCRModel(model_name=test_model, languages=['en'])
+    model = DLOCRModel(model_name=test_model, languages=['en','el'])
     
     success = model.load_model(progress_callback=lambda msg: print(f"  {msg}"))
     
-    if success and len(sys.argv) > 1:
-        image_path = sys.argv[1]
+    if success and len(sys.argv) > 2:
+        image_path = sys.argv[2]
         print(f"\nProcessing: {image_path}")
         
         image = Image.open(image_path)
